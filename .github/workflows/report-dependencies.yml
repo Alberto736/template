@@ -13,47 +13,89 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Send dependencies to security-inventory
-        uses: actions/github-script@v7
+      - name: Set up Python
+        uses: actions/setup-python@v5
         with:
-          github-token: ${{ secrets.PAT_TOKEN }}
-          script: |
-            const fs = require('fs');
-            
-            const pkg = JSON.parse(fs.readFileSync('package.json', 'utf8'));
-            const deps = pkg.dependencies || {};
-            
-            const lines = [
-              `repo: ${context.repo.repo}`,
-              `rama: ${context.ref.replace('refs/heads/', '')}`,
-              `ultima_actualizacion: "${new Date().toISOString().split('T')[0]}"`,
-              `dependencias:`,
-              ...Object.entries(deps).map(([name, version]) => 
-                `  - name: ${name}\n    version: "${version.replace(/[\^~]/g, '')}"`)
-            ];
-            const content = lines.join('\n');
-            
-            const path = `inventario/${context.repo.repo}.yaml`;
-            
-            let sha;
-            try {
-              const { data } = await github.rest.repos.getContent({
-                owner: context.repo.owner,
-                repo: 'security-inventory',
-                path
-              });
-              sha = data.sha;
-            } catch (e) {
-              sha = undefined;
-            }
-            
-            await github.rest.repos.createOrUpdateFileContents({
-              owner: context.repo.owner,
-              repo: 'security-inventory',
-              path,
-              message: `Update inventory for ${context.repo.repo}`,
-              content: Buffer.from(content).toString('base64'),
-              sha
-            });
-            
-            console.log('Inventory updated successfully');
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: pip install requests pyyaml
+
+      - name: Collect and send dependencies
+        env:
+          SECURITY_API_URL: ${{ secrets.SECURITY_API_URL }}
+        run: |
+          python3 << 'EOF'
+          import json
+          import os
+          import re
+          import requests
+          import yaml
+
+          repo = os.environ.get("GITHUB_REPOSITORY", "unknown").split("/")[-1]
+          rama = os.environ.get("GITHUB_REF_NAME", "unknown")
+          api_url = os.environ.get("SECURITY_API_URL")
+          dependencies = []
+
+          # npm - package.json
+          if os.path.exists("package.json"):
+              with open("package.json") as f:
+                  pkg = json.load(f)
+              for name, version in pkg.get("dependencies", {}).items():
+                  dependencies.append({"ecosystem": "npm", "name": name, "version": version.replace("^","").replace("~","")})
+
+          # pip - requirements.txt
+          if os.path.exists("requirements.txt"):
+              with open("requirements.txt") as f:
+                  for line in f:
+                      line = line.strip()
+                      if line and not line.startswith("#"):
+                          match = re.match(r"([a-zA-Z0-9_\-]+)[=><]+([^\s]+)", line)
+                          if match:
+                              dependencies.append({"ecosystem": "pip", "name": match.group(1), "version": match.group(2)})
+
+          # composer - composer.json
+          if os.path.exists("composer.json"):
+              with open("composer.json") as f:
+                  pkg = json.load(f)
+              for name, version in pkg.get("require", {}).items():
+                  if not name.startswith("php"):
+                      dependencies.append({"ecosystem": "composer", "name": name, "version": version.replace("^","").replace("~","")})
+
+          # maven - pom.xml
+          if os.path.exists("pom.xml"):
+              with open("pom.xml") as f:
+                  content = f.read()
+              matches = re.findall(r"<artifactId>(.+?)</artifactId>.*?<version>(.+?)</version>", content, re.DOTALL)
+              for name, version in matches:
+                  dependencies.append({"ecosystem": "maven", "name": name, "version": version})
+
+          # docker-compose
+          if os.path.exists("docker-compose.yml"):
+              with open("docker-compose.yml") as f:
+                  compose = yaml.safe_load(f)
+              services = compose.get("services", {})
+              for service, config in services.items():
+                  image = config.get("image", "")
+                  if ":" in image:
+                      name, version = image.split(":", 1)
+                  else:
+                      name, version = image, "latest"
+                  dependencies.append({"ecosystem": "docker", "name": name, "version": version})
+
+          payload = {
+              "repo": repo,
+              "rama": rama,
+              "dependencias": dependencies
+          }
+
+          print(f"Encontradas {len(dependencies)} dependencias en {repo}")
+          print(json.dumps(payload, indent=2))
+
+          if api_url:
+              response = requests.post(f"{api_url}/inventario", json=payload)
+              print(f"API response: {response.status_code}")
+          else:
+              print("SECURITY_API_URL no configurada - solo mostrando dependencias")
+
+          EOF
