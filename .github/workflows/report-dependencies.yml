@@ -19,7 +19,7 @@ jobs:
           python-version: "3.11"
 
       - name: Install dependencies
-        run: pip install requests pyyaml
+        run: pip install requests pyyaml toml
 
       - name: Collect and send dependencies
         env:
@@ -54,7 +54,7 @@ jobs:
                           if match:
                               dependencies.append({"ecosystem": "pip", "name": match.group(1), "version": match.group(2)})
 
-          # composer - composer.json
+          # composer - composer.json (PHP)
           if os.path.exists("composer.json"):
               with open("composer.json") as f:
                   pkg = json.load(f)
@@ -62,13 +62,60 @@ jobs:
                   if not name.startswith("php"):
                       dependencies.append({"ecosystem": "composer", "name": name, "version": version.replace("^","").replace("~","")})
 
-          # maven - pom.xml
+          # maven - pom.xml (Java)
           if os.path.exists("pom.xml"):
               with open("pom.xml") as f:
                   content = f.read()
               matches = re.findall(r"<artifactId>(.+?)</artifactId>.*?<version>(.+?)</version>", content, re.DOTALL)
               for name, version in matches:
                   dependencies.append({"ecosystem": "maven", "name": name, "version": version})
+
+          # gradle - build.gradle (Java/Kotlin)
+          if os.path.exists("build.gradle"):
+              with open("build.gradle") as f:
+                  content = f.read()
+              matches = re.findall(r"['\"]([a-zA-Z0-9\.\-]+):([a-zA-Z0-9\.\-]+):([0-9][^\s'\"]+)['\"]", content)
+              for group, name, version in matches:
+                  dependencies.append({"ecosystem": "gradle", "name": f"{group}:{name}", "version": version})
+
+          # nuget - *.csproj (C#)
+          import glob
+          for csproj in glob.glob("**/*.csproj", recursive=True):
+              with open(csproj) as f:
+                  content = f.read()
+              matches = re.findall(r'PackageReference Include="([^"]+)" Version="([^"]+)"', content)
+              for name, version in matches:
+                  dependencies.append({"ecosystem": "nuget", "name": name, "version": version})
+
+          # rubygems - Gemfile (Ruby)
+          if os.path.exists("Gemfile"):
+              with open("Gemfile") as f:
+                  content = f.read()
+              matches = re.findall(r"gem ['\"]([^'\"]+)['\"].*?['\"]([0-9][^'\"]+)['\"]", content)
+              for name, version in matches:
+                  dependencies.append({"ecosystem": "rubygems", "name": name, "version": version})
+
+          # cargo - Cargo.toml (Rust)
+          if os.path.exists("Cargo.toml"):
+              try:
+                  import toml
+                  with open("Cargo.toml") as f:
+                      cargo = toml.load(f)
+                  for name, version in cargo.get("dependencies", {}).items():
+                      if isinstance(version, str):
+                          dependencies.append({"ecosystem": "cargo", "name": name, "version": version.replace("^","")})
+                      elif isinstance(version, dict):
+                          dependencies.append({"ecosystem": "cargo", "name": name, "version": version.get("version", "unknown")})
+              except:
+                  pass
+
+          # golang - go.mod
+          if os.path.exists("go.mod"):
+              with open("go.mod") as f:
+                  content = f.read()
+              matches = re.findall(r"^\s+([^\s]+)\s+v([^\s]+)", content, re.MULTILINE)
+              for name, version in matches:
+                  dependencies.append({"ecosystem": "golang", "name": name, "version": version})
 
           # docker-compose
           if os.path.exists("docker-compose.yml"):
@@ -77,11 +124,20 @@ jobs:
               services = compose.get("services", {})
               for service, config in services.items():
                   image = config.get("image", "")
-                  if ":" in image:
-                      name, version = image.split(":", 1)
-                  else:
-                      name, version = image, "latest"
-                  dependencies.append({"ecosystem": "docker", "name": name, "version": version})
+                  if image:
+                      if ":" in image:
+                          name, version = image.split(":", 1)
+                      else:
+                          name, version = image, "latest"
+                      dependencies.append({"ecosystem": "docker", "name": name, "version": version})
+
+          # terraform - *.tf
+          for tf_file in glob.glob("**/*.tf", recursive=True):
+              with open(tf_file) as f:
+                  content = f.read()
+              matches = re.findall(r'source\s+=\s+"([^"]+)".*?version\s+=\s+"([^"]+)"', content, re.DOTALL)
+              for name, version in matches:
+                  dependencies.append({"ecosystem": "terraform", "name": name, "version": version})
 
           payload = {
               "repo": repo,
