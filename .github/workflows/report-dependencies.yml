@@ -37,14 +37,12 @@ jobs:
           api_url = os.environ.get("SECURITY_API_URL")
           dependencies = []
 
-          # npm - package.json
           if os.path.exists("package.json"):
               with open("package.json") as f:
                   pkg = json.load(f)
               for name, version in pkg.get("dependencies", {}).items():
                   dependencies.append({"ecosystem": "npm", "name": name, "version": version.replace("^","").replace("~","")})
 
-          # pip - requirements.txt
           if os.path.exists("requirements.txt"):
               with open("requirements.txt") as f:
                   for line in f:
@@ -54,7 +52,6 @@ jobs:
                           if match:
                               dependencies.append({"ecosystem": "pip", "name": match.group(1), "version": match.group(2)})
 
-          # composer - composer.json (PHP)
           if os.path.exists("composer.json"):
               with open("composer.json") as f:
                   pkg = json.load(f)
@@ -62,7 +59,6 @@ jobs:
                   if not name.startswith("php"):
                       dependencies.append({"ecosystem": "composer", "name": name, "version": version.replace("^","").replace("~","")})
 
-          # maven - pom.xml (Java)
           if os.path.exists("pom.xml"):
               with open("pom.xml") as f:
                   content = f.read()
@@ -70,7 +66,6 @@ jobs:
               for name, version in matches:
                   dependencies.append({"ecosystem": "maven", "name": name, "version": version})
 
-          # gradle - build.gradle (Java/Kotlin)
           if os.path.exists("build.gradle"):
               with open("build.gradle") as f:
                   content = f.read()
@@ -78,7 +73,6 @@ jobs:
               for group, name, version in matches:
                   dependencies.append({"ecosystem": "gradle", "name": f"{group}:{name}", "version": version})
 
-          # nuget - *.csproj (C#)
           import glob
           for csproj in glob.glob("**/*.csproj", recursive=True):
               with open(csproj) as f:
@@ -87,7 +81,6 @@ jobs:
               for name, version in matches:
                   dependencies.append({"ecosystem": "nuget", "name": name, "version": version})
 
-          # rubygems - Gemfile (Ruby)
           if os.path.exists("Gemfile"):
               with open("Gemfile") as f:
                   content = f.read()
@@ -95,7 +88,6 @@ jobs:
               for name, version in matches:
                   dependencies.append({"ecosystem": "rubygems", "name": name, "version": version})
 
-          # cargo - Cargo.toml (Rust)
           if os.path.exists("Cargo.toml"):
               try:
                   import toml
@@ -109,7 +101,6 @@ jobs:
               except:
                   pass
 
-          # golang - go.mod
           if os.path.exists("go.mod"):
               with open("go.mod") as f:
                   content = f.read()
@@ -117,7 +108,6 @@ jobs:
               for name, version in matches:
                   dependencies.append({"ecosystem": "golang", "name": name, "version": version})
 
-          # docker-compose
           if os.path.exists("docker-compose.yml"):
               with open("docker-compose.yml") as f:
                   compose = yaml.safe_load(f)
@@ -131,7 +121,6 @@ jobs:
                           name, version = image, "latest"
                       dependencies.append({"ecosystem": "docker", "name": name, "version": version})
 
-          # terraform - *.tf
           for tf_file in glob.glob("**/*.tf", recursive=True):
               with open(tf_file) as f:
                   content = f.read()
