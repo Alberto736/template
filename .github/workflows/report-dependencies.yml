@@ -2,6 +2,8 @@ name: Report Dependencies to Security Inventory
 
 on:
   push:
+    branches: [ main, master ] # Se ejecuta al subir a ramas principales
+
 jobs:
   report:
     runs-on: ubuntu-latest
@@ -19,6 +21,7 @@ jobs:
 
       - name: Collect and send dependencies
         env:
+          # Asegúrate de configurar este secreto en Settings > Secrets > Actions
           SECURITY_API_URL: ${{ secrets.SECURITY_API_URL }}
         run: |
           python3 << 'EOF'
@@ -27,102 +30,79 @@ jobs:
           import re
           import requests
           import yaml
+          import glob
 
+          # 1. Configuración inicial
           repo = os.environ.get("GITHUB_REPOSITORY", "unknown").split("/")[-1]
           rama = os.environ.get("GITHUB_REF_NAME", "unknown")
-          api_url = os.environ.get("SECURITY_API_URL")
+          # Limpiamos la URL para que no tenga barra al final y evitar el error de doble barra //
+          api_url = os.environ.get("SECURITY_API_URL", "").rstrip("/")
           dependencies = []
 
+          def safe_add(ecosystem, name, version):
+              if name and version:
+                  # Limpieza básica de versiones para que las APIs de seguridad las entiendan
+                  clean_v = version.strip().replace("^","").replace("~","").split(" ")[0]
+                  dependencies.append({"ecosystem": ecosystem, "name": name, "version": clean_v})
+
+          # --- BLOQUES DE DETECCIÓN ---
+
+          # NPM / Node
           if os.path.exists("package.json"):
-              with open("package.json") as f:
-                  pkg = json.load(f)
-              for name, version in pkg.get("dependencies", {}).items():
-                  dependencies.append({"ecosystem": "npm", "name": name, "version": version.replace("^","").replace("~","")})
-
-          if os.path.exists("requirements.txt"):
-              with open("requirements.txt") as f:
-                  for line in f:
-                      line = line.strip()
-                      if line and not line.startswith("#"):
-                          match = re.match(r"([a-zA-Z0-9_\-]+)[=><]+([^\s]+)", line)
-                          if match:
-                              dependencies.append({"ecosystem": "pip", "name": match.group(1), "version": match.group(2)})
-
-          if os.path.exists("composer.json"):
-              with open("composer.json") as f:
-                  pkg = json.load(f)
-              for name, version in pkg.get("require", {}).items():
-                  if not name.startswith("php"):
-                      dependencies.append({"ecosystem": "composer", "name": name, "version": version.replace("^","").replace("~","")})
-
-          if os.path.exists("pom.xml"):
-              with open("pom.xml") as f:
-                  content = f.read()
-              matches = re.findall(r"<artifactId>(.+?)</artifactId>.*?<version>(.+?)</version>", content, re.DOTALL)
-              for name, version in matches:
-                  dependencies.append({"ecosystem": "maven", "name": name, "version": version})
-
-          if os.path.exists("build.gradle"):
-              with open("build.gradle") as f:
-                  content = f.read()
-              matches = re.findall(r"['\"]([a-zA-Z0-9\.\-]+):([a-zA-Z0-9\.\-]+):([0-9][^\s'\"]+)['\"]", content)
-              for group, name, version in matches:
-                  dependencies.append({"ecosystem": "gradle", "name": f"{group}:{name}", "version": version})
-
-          import glob
-          for csproj in glob.glob("**/*.csproj", recursive=True):
-              with open(csproj) as f:
-                  content = f.read()
-              matches = re.findall(r'PackageReference Include="([^"]+)" Version="([^"]+)"', content)
-              for name, version in matches:
-                  dependencies.append({"ecosystem": "nuget", "name": name, "version": version})
-
-          if os.path.exists("Gemfile"):
-              with open("Gemfile") as f:
-                  content = f.read()
-              matches = re.findall(r"gem ['\"]([^'\"]+)['\"].*?['\"]([0-9][^'\"]+)['\"]", content)
-              for name, version in matches:
-                  dependencies.append({"ecosystem": "rubygems", "name": name, "version": version})
-
-          if os.path.exists("Cargo.toml"):
               try:
-                  import toml
-                  with open("Cargo.toml") as f:
-                      cargo = toml.load(f)
-                  for name, version in cargo.get("dependencies", {}).items():
-                      if isinstance(version, str):
-                          dependencies.append({"ecosystem": "cargo", "name": name, "version": version.replace("^","")})
-                      elif isinstance(version, dict):
-                          dependencies.append({"ecosystem": "cargo", "name": name, "version": version.get("version", "unknown")})
-              except:
-                  pass
+                  with open("package.json") as f:
+                      pkg = json.load(f)
+                      for name, v in pkg.get("dependencies", {}).items():
+                          safe_add("npm", name, v)
+              except: pass
 
-          if os.path.exists("go.mod"):
-              with open("go.mod") as f:
-                  content = f.read()
-              matches = re.findall(r"^\s+([^\s]+)\s+v([^\s]+)", content, re.MULTILINE)
-              for name, version in matches:
-                  dependencies.append({"ecosystem": "golang", "name": name, "version": version})
+          # Python (Mejorado para ignorar comentarios y manejar versiones complejas)
+          if os.path.exists("requirements.txt"):
+              try:
+                  with open("requirements.txt") as f:
+                      for line in f:
+                          line = line.split('#')[0].strip() # Ignora comentarios al final de la línea
+                          if line:
+                              match = re.match(r"^([a-zA-Z0-9_\-\[\]]+)([=><!~ ]+)([^\s;]+)", line)
+                              if match:
+                                  safe_add("pip", match.group(1), match.group(3))
+              except: pass
 
+          # PHP Composer
+          if os.path.exists("composer.json"):
+              try:
+                  with open("composer.json") as f:
+                      pkg = json.load(f)
+                      for name, v in pkg.get("require", {}).items():
+                          if name != "php":
+                              safe_add("composer", name, v)
+              except: pass
+
+          # Java Maven (Mejorado para capturar bloques completos)
+          if os.path.exists("pom.xml"):
+              try:
+                  with open("pom.xml") as f:
+                      content = f.read()
+                      matches = re.findall(r"<dependency>.*?<artifactId>(.*?)</artifactId>.*?<version>(.*?)</version>.*?</dependency>", content, re.DOTALL)
+                      for name, v in matches:
+                          safe_add("maven", name.strip(), v.strip())
+              except: pass
+
+          # Docker Compose (Análisis de imágenes)
           if os.path.exists("docker-compose.yml"):
-              with open("docker-compose.yml") as f:
-                  compose = yaml.safe_load(f)
-              services = compose.get("services", {})
-              for service, config in services.items():
-                  image = config.get("image", "")
-                  if image:
-                      if ":" in image:
-                          name, version = image.split(":", 1)
-                      else:
-                          name, version = image, "latest"
-                      dependencies.append({"ecosystem": "docker", "name": name, "version": version})
+              try:
+                  with open("docker-compose.yml") as f:
+                      compose = yaml.safe_load(f)
+                      for service in compose.get("services", {}).values():
+                          image = service.get("image", "")
+                          if image:
+                              parts = image.split(":")
+                              name = parts[0]
+                              v = parts[1] if len(parts) > 1 else "latest"
+                              safe_add("docker", name, v)
+              except: pass
 
-          for tf_file in glob.glob("**/*.tf", recursive=True):
-              with open(tf_file) as f:
-                  content = f.read()
-              matches = re.findall(r'source\s+=\s+"([^"]+)".*?version\s+=\s+"([^"]+)"', content, re.DOTALL)
-              for name, version in matches:
-                  dependencies.append({"ecosystem": "terraform", "name": name, "version": version})
+          # --- ENVÍO DE DATOS ---
 
           payload = {
               "repo": repo,
@@ -130,13 +110,20 @@ jobs:
               "dependencias": dependencies
           }
 
-          print(f"Encontradas {len(dependencies)} dependencias en {repo}")
-          print(json.dumps(payload, indent=2))
+          print(f"📦 Encontradas {len(dependencies)} dependencias en {repo}")
 
-          if api_url:
-              response = requests.post(f"{api_url}/inventario", json=payload)
-              print(f"API response: {response.status_code}")
+          if api_url and dependencies:
+              try:
+                  # Enviamos a /inventario con un timeout de 15 segundos
+                  target = f"{api_url}/inventario"
+                  print(f"🚀 Enviando a {target}...")
+                  response = requests.post(target, json=payload, timeout=15)
+                  print(f"✅ API Response: {response.status_code}")
+                  if response.status_code != 200:
+                      print(f"⚠️ Detalle: {response.text}")
+              except Exception as e:
+                  print(f"❌ Error de conexión: {e}")
           else:
-              print("SECURITY_API_URL no configurada - solo mostrando dependencias")
+              print("ℹ️ No se envió nada (URL vacía o 0 dependencias encontradas)")
 
           EOF
