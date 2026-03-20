@@ -1,12 +1,84 @@
-name: Report Dependencies to Security Inventory
+name: Enterprise Security & Dependency Management
 
 on:
   push:
-    branches: [ main, master ] # Se ejecuta al subir a ramas principales
+    branches: [ main, master, develop ]
+  pull_request:
+    branches: [ main, master ]
+  schedule:
+    # Ejecución semanal para escaneo de seguridad
+    - cron: '0 2 * * 1'  # Lunes 2 AM
 
 jobs:
-  report:
+  security-scan:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write
+      actions: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: |
+          pip install requests pyyaml toml safety pip-licenses
+          npm install -g audit-ci
+
+      - name: Run Security Scans
+        run: |
+          echo "🔒 Running comprehensive security scans..."
+          
+          # Python security scan
+          if [ -f "requirements.txt" ]; then
+            echo "📦 Scanning Python dependencies..."
+            safety check --json --output safety-report.json || true
+            pip-licenses --from=mixed --format=json > license-report.json || true
+          fi
+          
+          # Node.js security scan
+          if [ -f "package.json" ]; then
+            echo "📦 Scanning Node.js dependencies..."
+            npm audit --json > npm-audit.json || true
+          fi
+          
+          # License validation
+          echo "📄 Validating licenses..."
+          python3 << 'EOF'
+          import json
+          import os
+          
+          # Check for problematic licenses
+          problematic_licenses = ['GPL-3.0', 'AGPL-3.0', 'LGPL-3.0']
+          
+          if os.path.exists('license-report.json'):
+              with open('license-report.json') as f:
+                  licenses = json.load(f)
+                  
+              for pkg in licenses:
+                  if pkg.get('License') in problematic_licenses:
+                      print(f"⚠️ Problematic license found: {pkg.get('Name')} - {pkg.get('License')}")
+          EOF
+
+      - name: Upload Security Reports
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: security-reports
+          path: |
+            safety-report.json
+            npm-audit.json
+            license-report.json
+          retention-days: 30
+
+  dependency-inventory:
+    runs-on: ubuntu-latest
+    needs: security-scan
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -21,8 +93,8 @@ jobs:
 
       - name: Collect and send dependencies
         env:
-          # Asegúrate de configurar este secreto en Settings > Secrets > Actions
           SECURITY_API_URL: ${{ secrets.SECURITY_API_URL }}
+          SLACK_WEBHOOK: ${{ secrets.SLACK_SECURITY_WEBHOOK }}
         run: |
           python3 << 'EOF'
           import json
@@ -102,6 +174,79 @@ jobs:
                               safe_add("docker", name, v)
               except: pass
 
+          # Java Gradle
+          gradle_files = ["build.gradle", "build.gradle.kts"]
+          for gradle_file in gradle_files:
+              if os.path.exists(gradle_file):
+                  try:
+                      with open(gradle_file) as f:
+                          content = f.read()
+                          # Detect dependencies en formato Gradle
+                          implementation_matches = re.findall(r'implementation\s+[\'"]([^\'"]+):([^\'"]+):([^\'"]+)[\'"]', content)
+                          api_matches = re.findall(r'api\s+[\'"]([^\'"]+):([^\'"]+):([^\'"]+)[\'"]', content)
+                          test_matches = re.findall(r'testImplementation\s+[\'"]([^\'"]+):([^\'"]+):([^\'"]+)[\'"]', content)
+                          
+                          for group, artifact, version in implementation_matches + api_matches + test_matches:
+                              safe_add("gradle", f"{group}:{artifact}", version)
+                  except: pass
+
+          # .NET NuGet
+          csproj_files = glob.glob("*.csproj")
+          for csproj_file in csproj_files:
+              try:
+                  with open(csproj_file) as f:
+                      content = f.read()
+                      package_matches = re.findall(r'<PackageReference\s+Include="([^"]+)"\s+Version="([^"]+)"', content)
+                      for name, version in package_matches:
+                          safe_add("nuget", name, version)
+              except: pass
+
+          # Ruby Gems
+          if os.path.exists("Gemfile"):
+              try:
+                  with open("Gemfile") as f:
+                      for line in f:
+                          line = line.strip().split('#')[0]  # Ignora comentarios
+                          if line.startswith("gem "):
+                              match = re.match(r'gem\s+[\'"]([^\'"]+)[\'"](?:,\s*[\'"]([^\'"]+)[\'"])?', line)
+                              if match:
+                                  name = match.group(1)
+                                  version = match.group(2) if match.group(2) else "latest"
+                                  safe_add("rubygems", name, version)
+              except: pass
+
+          # Terraform
+          tf_files = glob.glob("*.tf")
+          for tf_file in tf_files:
+              try:
+                  with open(tf_file) as f:
+                      content = f.read()
+                      # Detect modules y providers
+                      module_matches = re.findall(r'module\s+"([^"]+)"\s*{\s*source\s*=\s*"([^"]+)"', content)
+                      provider_matches = re.findall(r'provider\s+"([^"]+)"\s*{\s*version\s*=\s*"([^"]+)"', content)
+                      
+                      for name, source in module_matches:
+                          # Extraer versión del source si está disponible
+                          version_parts = source.split("?ref=")
+                          version = version_parts[1] if len(version_parts) > 1 else "latest"
+                          safe_add("terraform", f"module:{name}", version)
+                      
+                      for provider, version in provider_matches:
+                          safe_add("terraform", f"provider:{provider}", version)
+              except: pass
+
+          # GitHub Actions
+          workflow_files = glob.glob(".github/workflows/*.yml") + glob.glob(".github/workflows/*.yaml")
+          for workflow_file in workflow_files:
+              try:
+                  with open(workflow_file) as f:
+                      content = f.read()
+                      # Detect actions usadas
+                      action_matches = re.findall(r'uses:\s*([^/\s]+/[^@\s]+)@([^\s]+)', content)
+                      for action, version in action_matches:
+                          safe_add("github-actions", action, version)
+              except: pass
+
           # --- ENVÍO DE DATOS ---
 
           payload = {
@@ -111,10 +256,17 @@ jobs:
           }
 
           print(f"📦 Encontradas {len(dependencies)} dependencias en {repo}")
+          
+          # Conteo por ecosistema
+          ecosystem_count = {}
+          for dep in dependencies:
+              ecosystem_count[dep['ecosystem']] = ecosystem_count.get(dep['ecosystem'], 0) + 1
+          
+          print(f"📊 Distribución: {dict(ecosystem_count)}")
 
+          # Enviar a API de seguridad
           if api_url and dependencies:
               try:
-                  # Enviamos a /inventario con un timeout de 15 segundos
                   target = f"{api_url}/inventario"
                   print(f"🚀 Enviando a {target}...")
                   response = requests.post(target, json=payload, timeout=15)
@@ -123,7 +275,91 @@ jobs:
                       print(f"⚠️ Detalle: {response.text}")
               except Exception as e:
                   print(f"❌ Error de conexión: {e}")
+          
+          # Notificación Slack
+          slack_webhook = os.environ.get("SLACK_WEBHOOK")
+          if slack_webhook and dependencies:
+              try:
+                  slack_msg = {
+                      "text": f"🔒 Security Update: {repo}",
+                      "attachments": [{
+                          "color": "good",
+                          "fields": [
+                              {"title": "Repository", "value": repo, "short": True},
+                              {"title": "Branch", "value": rama, "short": True},
+                              {"title": "Dependencies", "value": str(len(dependencies)), "short": True},
+                              {"title": "Ecosystems", "value": ", ".join(ecosystem_count.keys()), "short": True}
+                          ]
+                      }]
+                  }
+                  requests.post(slack_webhook, json=slack_msg, timeout=10)
+                  print("✅ Slack notification sent")
+              except Exception as e:
+                  print(f"❌ Slack error: {e}")
           else:
               print("ℹ️ No se envió nada (URL vacía o 0 dependencias encontradas)")
 
+          EOF
+
+  vulnerability-alert:
+    runs-on: ubuntu-latest
+    if: github.event_name == 'schedule'
+    needs: [security-scan, dependency-inventory]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        
+      - name: Download security reports
+        uses: actions/download-artifact@v4
+        with:
+          name: security-reports
+          
+      - name: Check for critical vulnerabilities
+        env:
+          SECURITY_API_URL: ${{ secrets.SECURITY_API_URL }}
+        run: |
+          python3 << 'EOF'
+          import json
+          import os
+          import requests
+          
+          critical_vulns = []
+          
+          # Check Python vulnerabilities
+          if os.path.exists('safety-report.json'):
+              with open('safety-report.json') as f:
+                  data = json.load(f)
+                  for vuln in data.get('vulnerabilities', []):
+                      if vuln.get('severity') == 'HIGH' or vuln.get('severity') == 'CRITICAL':
+                          critical_vulns.append(f"Python: {vuln.get('package')} - {vuln.get('id')}")
+          
+          # Check Node.js vulnerabilities
+          if os.path.exists('npm-audit.json'):
+              with open('npm-audit.json') as f:
+                  data = json.load(f)
+                  for vuln in data.get('vulnerabilities', {}).values():
+                      if vuln.get('severity') in ['high', 'critical']:
+                          critical_vulns.append(f"Node.js: {vuln.get('name')} - {vuln.get('title')}")
+          
+          if critical_vulns:
+              print(f"🚨 CRITICAL: Found {len(critical_vulns)} critical vulnerabilities")
+              for vuln in critical_vulns:
+                  print(f"  - {vuln}")
+              
+              # Send emergency notification
+              api_url = os.environ.get("SECURITY_API_URL", "").rstrip("/")
+              if api_url:
+                  try:
+                      alert_payload = {
+                          "type": "critical_vulnerability",
+                          "repository": os.environ.get("GITHUB_REPOSITORY", "unknown"),
+                          "vulnerabilities": critical_vulns
+                      }
+                      requests.post(f"{api_url}/alert", json=alert_payload, timeout=10)
+                      print("🚨 Emergency alert sent")
+                  except Exception as e:
+                      print(f"❌ Alert error: {e}")
+          else:
+              print("✅ No critical vulnerabilities found")
+          
           EOF

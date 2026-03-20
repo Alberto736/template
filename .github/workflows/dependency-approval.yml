@@ -1,0 +1,73 @@
+name: Dependency Approval Workflow
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+jobs:
+  dependency-review:
+    runs-on: ubuntu-latest
+    if: contains(github.event.pull_request.labels.*.name, 'dependencies')
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        
+      - name: Dependency Review
+        uses: actions/dependency-review-action@v4
+        with:
+          fail-on-severity: moderate
+          deny-licenses: |
+            GPL-3.0
+            AGPL-3.0
+            LGPL-3.0
+          allow-licenses: |
+            MIT
+            Apache-2.0
+            BSD-2-Clause
+            BSD-3-Clause
+          summary-comment: true
+          license-check: true
+          vulnerability-check: true
+          base-ref: main
+          head-ref: ${{ github.head_ref }}
+
+  security-approval:
+    runs-on: ubuntu-latest
+    if: contains(github.event.pull_request.labels.*.name, 'dependencies')
+    steps:
+      - name: Require Security Team Approval
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const { data: reviews } = await github.rest.pulls.listReviews({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pull_number: context.issue.number,
+            });
+            
+            const securityTeamApproved = reviews.some(review => 
+              review.user.login.includes('security-team') && 
+              review.state === 'APPROVED'
+            );
+            
+            if (!securityTeamApproved) {
+              core.setFailed('Security team approval required for dependency updates');
+            }
+
+  auto-merge:
+    runs-on: ubuntu-latest
+    needs: [dependency-review, security-approval]
+    if: |
+      contains(github.event.pull_request.labels.*.name, 'dependencies') &&
+      !contains(github.event.pull_request.labels.*.name, 'do-not-merge')
+    steps:
+      - name: Auto-merge dependency updates
+        uses: actions/github-script@v7
+        with:
+          script: |
+            await github.rest.pulls.merge({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pull_number: context.issue.number,
+              merge_method: 'squash'
+            });

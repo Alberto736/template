@@ -1,52 +1,163 @@
 version: 2
 
 updates:
+  # Node.js / JavaScript
   - package-ecosystem: "npm"
     directory: "/"
     schedule:
       interval: "daily"
+      time: "09:00"
+      timezone: "Europe/Madrid"
+    open-pull-requests-limit: 5
+    versioning-strategy: "lockfile-only"
+    labels:
+      - "dependencies"
+      - "javascript"
+      - "security"
+    assignees:
+      - "security-team"
+    reviewers:
+      - "tech-lead"
 
+  # Python
   - package-ecosystem: "pip"
     directory: "/"
     schedule:
       interval: "daily"
+      time: "09:00"
+      timezone: "Europe/Madrid"
+    open-pull-requests-limit: 5
+    versioning-strategy: "lockfile-only"
+    labels:
+      - "dependencies"
+      - "python"
+      - "security"
+    assignees:
+      - "security-team"
+    reviewers:
+      - "python-team"
 
+  # Docker
   - package-ecosystem: "docker"
     directory: "/"
     schedule:
       interval: "daily"
+      time: "09:00"
+      timezone: "Europe/Madrid"
+    open-pull-requests-limit: 3
+    labels:
+      - "dependencies"
+      - "docker"
+      - "security"
+    assignees:
+      - "devops-team"
 
+  # Java Maven
   - package-ecosystem: "maven"
     directory: "/"
     schedule:
       interval: "daily"
+      time: "09:00"
+      timezone: "Europe/Madrid"
+    open-pull-requests-limit: 5
+    versioning-strategy: "lockfile-only"
+    labels:
+      - "dependencies"
+      - "java"
+      - "security"
+    assignees:
+      - "java-team"
 
+  # Java Gradle
   - package-ecosystem: "gradle"
     directory: "/"
     schedule:
       interval: "daily"
+      time: "09:00"
+      timezone: "Europe/Madrid"
+    open-pull-requests-limit: 5
+    versioning-strategy: "lockfile-only"
+    labels:
+      - "dependencies"
+      - "java"
+      - "security"
+    assignees:
+      - "java-team"
 
+  # PHP Composer
   - package-ecosystem: "composer"
     directory: "/"
     schedule:
       interval: "daily"
+      time: "09:00"
+      timezone: "Europe/Madrid"
+    open-pull-requests-limit: 5
+    versioning-strategy: "lockfile-only"
+    labels:
+      - "dependencies"
+      - "php"
+      - "security"
+    assignees:
+      - "php-team"
 
+  # .NET NuGet
   - package-ecosystem: "nuget"
     directory: "/"
     schedule:
       interval: "daily"
+      time: "09:00"
+      timezone: "Europe/Madrid"
+    open-pull-requests-limit: 5
+    versioning-strategy: "lockfile-only"
+    labels:
+      - "dependencies"
+      - "dotnet"
+      - "security"
+    assignees:
+      - "dotnet-team"
 
+  # Ruby Gems
   - package-ecosystem: "rubygems"
     directory: "/"
     schedule:
       interval: "daily"
+      time: "09:00"
+      timezone: "Europe/Madrid"
+    open-pull-requests-limit: 5
+    versioning-strategy: "lockfile-only"
+    labels:
+      - "dependencies"
+      - "ruby"
+      - "security"
+    assignees:
+      - "ruby-team"
 
+  # GitHub Actions
   - package-ecosystem: "github-actions"
     directory: "/"
     schedule:
       interval: "daily"
+      time: "09:00"
+      timezone: "Europe/Madrid"
+    open-pull-requests-limit: 3
+    labels:
+      - "dependencies"
+      - "github-actions"
+      - "security"
+    assignees:
+      - "devops-team"
 
+  # Terraform
   - package-ecosystem: "terraform"
     directory: "/"
     schedule:
       interval: "daily"
+      time: "09:00"
+      timezone: "Europe/Madrid"
+    open-pull-requests-limit: 3
+    labels:
+      - "dependencies"
+      - "terraform"
+      - "security"
+    assignees:
+      - "devops-team"
