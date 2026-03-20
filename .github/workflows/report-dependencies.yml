@@ -2,12 +2,13 @@ name: Enterprise Security & Dependency Management
 
 on:
   push:
-    branches: [ main, master, develop ]
+    branches: [ main, master, develop, feature/*, hotfix/*, release/* ]
   pull_request:
-    branches: [ main, master ]
+    branches: [ main, master, develop ]
   schedule:
-    # Ejecución semanal para escaneo de seguridad
+    # Ejecución semanal para escaneo de seguridad (todas las ramas)
     - cron: '0 2 * * 1'  # Lunes 2 AM
+  workflow_dispatch:  # Permite ejecución manual desde cualquier rama
 
 jobs:
   security-scan:
